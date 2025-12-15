@@ -1,0 +1,14 @@
+[package]
+name = "exo-gatekeeper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+exo-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

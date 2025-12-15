@@ -1,78 +1,47 @@
-# EXOCHAIN Fabric Platform
+# EXOCHAIN v2.2
 
-[![Apache 2.0 License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/exochain/exochain/blob/main/LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.75-orange?logo=rust)](https://www.rust-lang.org/)
-[![Build Status](https://github.com/exochain/exochain/workflows/CI/badge.svg)](https://github.com/exochain/exochain/actions)
-[![Discord](https://img.shields.io/discord/1234567890?color=7289da&logo=discord&logoColor=white)](https://discord.gg/exochain)
-[![Contributors](https://img.shields.io/github/contributors/exochain/exochain)](https://github.com/exochain/exochain/graphs/contributors)
-[![Stars](https://img.shields.io/github/stars/exochain/exochain?style=social)](https://github.com/exochain/exochain/stargazers)
+> **Trust Fabric for the Digital Economy**
+>
+> *Spec Revision 2.2 — Green-Field Implementation*
 
-The constitutional substrate for aligned superintelligence: EXOCHAIN enables adjudicated 0dentity, bailments, merits, and Holon agents with mathematical safety invariants. Deterministic finality, forensic audits, no PII on-ledger. Dive into our 76-page v2.2 spec PDF. Join the mission—Apache 2.0 licensed.
+EXOCHAIN is a verifiable, privacy-preserving substrate enabling secure identity adjudication, data sovereignty, and deterministic finality.
 
-EXOCHAIN is a Rust-powered DAG-BFT platform for privacy-preserving identity, consented data sharing, and verifiable AI governance. Built for excellence and safety in the ASI era, it provides a trust fabric where actions are provably aligned via the CGR kernel—ensuring recursive self-improvement stays safe by design.
+## Repository Structure
 
-## Why EXOCHAIN?
-In a world racing toward superintelligence, traditional infrastructure falls short. EXOCHAIN addresses this with:
-- **Privacy by Physics**: No PII/PHI on the immutable ledger—only commitments and proofs.
-- **Provable Alignment**: CGR kernel mathematically verifies invariants, solving the Divergence Problem for RSI.
-- **Holon Agents**: Sovereign AI entities (did:exo:) operating in a fluid MCP mesh, bound by constitutional rules.
-- **Forensic Evidence**: Court-admissible bundles for every interaction—human or AI.
-- **Merit & Bailment Fabrics**: Verifiable contributions and time-bound data access, ideal for ethical AI training.
-- **Open & Secure**: Apache 2.0 licensed, Rust secure-by-default, with BFT finality <2s.
+*   **`crates/exo-core`**: Cryptographic primitives (BLAKE3, Ed25519), Canonical CBOR, and HLC.
+*   **`crates/exo-dag`**: Directed Acyclic Graph engine, Checkpointing, and BFT consenus adapter.
+*   **`crates/exo-identity`**: Decentralized Identity (DID), Key Management, and RiskAttestation.
+*   **`crates/exo-consent`**: Bailment contracts, Policies, and Gatekeeper enforcement logic.
+*   **`crates/exo-gatekeeper`**: TEE / Enclave interfaces and attestation verification.
+*   **`governance/`**: Project governance, sub-agent charters, traceability matrices, and quality gates.
 
-Whether you're building regulated DAOs, safe ASI prototypes, or privacy-first apps, EXOCHAIN is your substrate. Fork us and join the mesh—we're building for humanity's future.
+## Governance & Compliance
 
-## Quickstart
-Get a local node running in minutes:
+This repository is managed under strict **Judicial Build Governance**. All contributions must align with `EXOCHAIN_Specification_v2.2.pdf`.
 
-1. **Install Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-2. **Clone the Repo**: `git clone https://github.com/exochain/exochain.git && cd exochain`
-3. **Build & Run**: `cargo build --release && cargo run --bin exo-node`
-4. **Test an Event**: Use the CLI to create a sample IdentityCreated event: `cargo run --bin exo-cli -- create-identity --did did:exo:example`
+*[Traceability Matrix](governance/traceability_matrix.md) | [Threat Model](governance/threat_matrix.md) | [Quality Gates](governance/quality_gates.md)*
 
-For full setup, see [docs/QUICKSTART.md](docs/QUICKSTART.md).  <-forthcoming
-Dive deeper with our [v2.2 Specification PDF]((https://github.com/exochain/exochain/blob/main/EXOCHAIN_Specification_v2.2.pdf))—your guide to the architecture.
-## Features
-- **Ledger Core**: Merkle-DAG events with BFT finality (exo-core, exo-dag crates).
-- **Identity & Governance**: Adjudicated 0dentity scoring, PACE recovery, AI-IRB integrations.
-- **AI Safety**: Holon lifecycle events, CGR proofs for alignment, merit attestations.
-- **Privacy Tools**: Bailments for time-bound access, off-ledger encrypted vaults.
-- **Extensibility**: Pluggable modules for tokenomics (optional), MCP mesh discovery.
+## Getting Started
 
-See the [Roadmap](#roadmap) for upcoming phases.
+### Prerequisites
 
-## Documentation
-- **[Full Specification (PDF)](https://github.com/exochain/exochain/blob/main/EXOCHAIN_Specification_v2.2.pdf)**: 76-page normative bible—start here.
-- **[API Reference](docs/API.md)**: GraphQL/REST endpoints with OpenAPI spec. <-forthcoming
-- **[Developer Guide](docs/DEVELOPER.md)**: Tutorials for building Holons and extending the kernel. <-forthcoming
-- **[Security Overview](SECURITY.md)**: Reporting vulns and our hardening practices. <-forthcoming
-- Hosted Docs: Coming soon via mdBook at exochain.ai/docs.
+*   Rust 1.75+
+*   Clang (for crypto extensions)
 
-## Community
-We're a mission-driven community forging the future of safe ASI. Join us:
-- **Discord**: [discord.gg/exochain](https://discord.gg/exochain) — chat with devs, share ideas.
-- **Discussions**: [github.com/exochain/exochain/discussions](https://github.com/exochain/exochain/discussions) — Q&A, feature requests. <-forthcoming
-- **Issues**: [Report bugs or suggest features](https://github.com/exochain/exochain/issues/new/choose). <-forthcoming
-- **Twitter/X**: [@exochain_ai](https://twitter.com/exochain) — updates and announcements.
-- **Reddit**: r/exochain — deeper dives into ASI safety.
+### Build & Test
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. First-timers: Start with docs fixes or small tests—your merit awaits. <-forthcoming
+```bash
+cargo build
+cargo test
+```
 
-## Roadmap
-Phased from the spec:
-- **Phase 1-2 (Core)**: Ledger and domain crates (in progress).
-- **Phase 3-4 (Proofs & API)**: Inclusion proofs, GraphQL endpoints.
-- **Phase 5 (Hardening)**: Audits, PACE full impl.
-- **Phase 6+ (Extensions)**: MCP mesh, optional tokenomics.
+### Contributing
 
-Track progress in [docs/ROADMAP.md](docs/ROADMAP.md) or issues labeled "roadmap." <-forthcoming
+See `governance/quality_gates.md` for strict PR requirements.
+1.  **Safety**: No PII on ledger. No admins.
+2.  **Quality**: 80% coverage required. No Clippy warnings.
+3.  **Process**: All PRs must map to a Spec requirement.
 
 ## License
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
 
-## Acknowledgments
-Backed by visionaries, former Green Berets, and Gold Star Families—dedicated to excellence, safety, and service. Join us in securing humanity's future.
-
----
-
-*Inspired by projects like Kubernetes and Rust—built for the ASI era.*
+Apache-2.0 - See [LICENSE](LICENSE).
