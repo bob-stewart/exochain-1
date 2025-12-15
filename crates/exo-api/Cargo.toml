@@ -1,0 +1,21 @@
+[package]
+name = "exo-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+exo-core.workspace = true
+exo-identity.workspace = true
+exo-dag.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+async-graphql = "7.0"
+axum = "0.7"
+tokio = { workspace = true, features = ["full"] }
+tracing = "0.1"
+hex = "0.4"
+libp2p = { version = "0.53", features = ["tcp", "tls", "noise", "yamux", "macros", "tokio"] }
+
+[dev-dependencies]
+tokio.workspace = true

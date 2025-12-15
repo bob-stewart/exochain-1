@@ -1,0 +1,55 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check Formatting
+        run: cargo fmt -- --check
+
+      - name: Clippy Linting
+        run: cargo clippy -- -D warnings
+
+      - name: Build Workspace
+        run: cargo build --verbose
+
+      - name: Run Tests
+        run: cargo test --verbose
+
+      # TODO: Enable once cargo-audit is configured in image or action
+      # - name: Security Audit
+      #   uses: rustsec/audit-check@v1.4.1
+      #   with:
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Generate Coverage
+        run: cargo tarpaulin --verbose --workspace --timeout 120 --out Xml
+      - name: Archive Coverage
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: cobertura.xml

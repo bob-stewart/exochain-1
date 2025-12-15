@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/exo-core",
+    "crates/exo-dag",
+    "crates/exo-identity",
+    "crates/exo-consent",
+    "crates/exo-api",
+    "crates/exo-gatekeeper",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["EXOCHAIN Foundation"]
+license = "Apache-2.0"
+repository = "https://github.com/exochain/exochain"
+
+[workspace.dependencies]
+# Intra-workspace dependencies
+exo-core = { path = "crates/exo-core", version = "0.1.0" }
+exo-dag = { path = "crates/exo-dag", version = "0.1.0" }
+exo-identity = { path = "crates/exo-identity", version = "0.1.0" }
+exo-consent = { path = "crates/exo-consent", version = "0.1.0" }
+
+# Third-party dependencies (Pinned for security)
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11" # Or ciborium if preferred for determinstic
+blake3 = "1.5"
+ed25519-dalek = { version = "2.1", features = ["serde", "rand_core"] }
+thiserror = "1.0"
+anyhow = "1.0"
+chrono = "0.4"
+tokio = { version = "1.32", features = ["full"] }
+async-trait = "0.1"
+proptest = "1.3"
+criterion = "0.5"
+bs58 = "0.5"
+hex = "0.4"
+rand = "0.8"
