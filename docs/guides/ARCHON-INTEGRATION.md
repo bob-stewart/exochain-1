@@ -1,153 +1,213 @@
-# Archon Integration Guide
+# ExoForge Integration Guide
 
 ## Overview
 
-[Archon](https://github.com/bob-stewart/remote-coding-agent.git) is a remote agentic coding platform built on the Claude Agent SDK. It enables autonomous code generation, validation, and pull request creation -- all governed by ExoChain's constitutional framework.
+[ExoForge](https://github.com/bob-stewart/exoforge) (based on [Archon](https://github.com/bob-stewart/remote-coding-agent)) is the autonomous implementation engine for ExoChain. It establishes a perpetual self-improvement cycle governed by the AI-IRB council of five panels across five disciplines.
 
-In the ExoChain ecosystem, Archon serves as the execution layer for council-approved backlog items. When the Board of Directors approves a suggestion and promotes it to the backlog, Archon picks up the work item and autonomously implements it, subject to governance gates before merge.
+ExoForge is not just a code generator — it is a governance-conditioned execution pipeline. Every artifact it produces passes through constitutional validation (8 invariants, 10 TNC controls) before it can be merged.
 
-## Pipeline
-
-The full lifecycle from user suggestion to deployed code:
+## The Self-Improvement Cycle
 
 ```
-AI Chat --> Suggestion --> Council Review --> Backlog --> Archon Workflow --> Governance Gate --> Deploy
+Widget AI Help Feedback
+    |
+    v
+[1] exochain-investigate-feedback  (Triage)
+    |
+    v
+[2] exochain-council-review  (AI-IRB 5-Panel Review)
+    |
+    ├── Approved ──> [3] exochain-generate-syntaxis  (Workflow Design)
+    |                     |
+    |                     v
+    |                [4] exochain-implement-feature  (Full-Stack Implementation)
+    |                     |
+    |                     v
+    |                [5] exochain-validate-constitution  (Governance Gate)
+    |                     |
+    |                     ├── PASS ──> [6] archon-finalize-pr  (Deploy)
+    |                     └── FAIL ──> [7] Remediation ──> Re-validate
+    |
+    ├── Rejected ──> Feedback to UI with rationale
+    ├── Deferred ──> Backlog (re-evaluate next cycle)
+    └── Amend ──> Re-investigate with council conditions
 ```
-
-1. **AI Chat** -- A user or AI assistant proposes a feature or fix through the chat interface.
-2. **Suggestion** -- The proposal is formalized as a structured suggestion with acceptance criteria.
-3. **Council Review** -- The Board of Directors reviews, debates, and votes on the suggestion.
-4. **Backlog** -- Approved suggestions are added to the governance-conditioned backlog.
-5. **Archon Workflow** -- Archon reads the backlog item, executes a DAG workflow to generate code.
-6. **Governance Gate** -- The kernel validates the output against all 8 constitutional invariants.
-7. **Deploy** -- On passing the governance gate, the PR is merged and deployed.
 
 ## Setup
 
-Clone and configure Archon for use with ExoChain:
+### Prerequisites
+
+- Bun 1.1+ (runtime for ExoForge)
+- Claude API key or Claude Code global auth
+- Git with SSH/HTTPS access to exochain/exochain
+
+### Installation
 
 ```bash
-git clone https://github.com/bob-stewart/remote-coding-agent.git
-cd remote-coding-agent
+# Clone ExoForge
+git clone https://github.com/bob-stewart/exoforge.git
+cd exoforge
 
-# Configure for the ExoChain repository
-cp .env.example .env
+# Install dependencies
+bun install
+
+# Configure (uses Claude Code global auth by default)
+archon setup
+
+# Verify ExoChain commands are loaded
+archon workflow list
 ```
 
-Edit `.env` to point at the ExoChain repo:
-
-```env
-TARGET_REPO=https://github.com/your-org/exochain.git
-CLAUDE_API_KEY=<your-key>
-GOVERNANCE_ENDPOINT=http://localhost:3003
+You should see the ExoChain workflows:
+```
+exochain-self-improvement-cycle   DAG   Perpetual self-improvement pipeline
+exochain-client-onboarding        DAG   Client requirements to deployed config
+exochain-fix-issue-dag            DAG   GitHub issue to governed PR
+exochain-continuous-governance    Loop  Constitutional drift monitoring
 ```
 
-## Custom Commands
+### Configuration
 
-ExoChain-specific Archon commands live in the `.archon/commands/` directory:
-
-| Command | Description |
-|---|---|
-| `generate-syntaxis-workflow` | Generates a Syntaxis visual workflow definition from a PRD or backlog item description. Outputs a `.syntaxis.json` file compatible with the Syntaxis Builder UI. |
-| `validate-constitution` | Runs the 8 constitutional invariant checks against a proposed changeset. Returns pass/fail with detailed violation reports. |
-| `generate-rust-bindings` | Scaffolds new Rust functions and corresponding WASM binding glue code from a typed interface specification. |
-
-Commands are invoked by Archon automatically as nodes in a workflow DAG, or manually:
-
-```bash
-archon run generate-syntaxis-workflow --input backlog-item-42.json
-```
-
-## Custom Workflows
-
-Workflows are defined as YAML DAGs in `.archon/workflows/`. The primary ExoChain workflow is:
-
-### `.archon/workflows/exochain-syntaxis-generator.yml`
+ExoForge reads configuration from `.archon/config.yaml`:
 
 ```yaml
-name: exochain-syntaxis-generator
-description: Generate a complete Syntaxis app from a backlog item PRD
-
-triggers:
-  - event: backlog.item.approved
-    filter:
-      type: syntaxis-app
-
-nodes:
-  parse-prd:
-    command: parse-prd
-    inputs:
-      source: ${{ trigger.backlog_item }}
-    outputs:
-      - spec
-
-  generate-workflow:
-    command: generate-syntaxis-workflow
-    depends_on: [parse-prd]
-    inputs:
-      spec: ${{ nodes.parse-prd.outputs.spec }}
-    outputs:
-      - workflow_json
-
-  generate-rust:
-    command: generate-rust-bindings
-    depends_on: [parse-prd]
-    inputs:
-      spec: ${{ nodes.parse-prd.outputs.spec }}
-    outputs:
-      - rust_source
-      - wasm_bindings
-
-  validate:
-    command: validate-constitution
-    depends_on: [generate-workflow, generate-rust]
-    inputs:
-      changeset:
-        - ${{ nodes.generate-workflow.outputs.workflow_json }}
-        - ${{ nodes.generate-rust.outputs.rust_source }}
-        - ${{ nodes.generate-rust.outputs.wasm_bindings }}
-    outputs:
-      - validation_report
-
-  create-pr:
-    command: create-pull-request
-    depends_on: [validate]
-    condition: ${{ nodes.validate.outputs.validation_report.passed == true }}
-    inputs:
-      files:
-        - ${{ nodes.generate-workflow.outputs.workflow_json }}
-        - ${{ nodes.generate-rust.outputs.rust_source }}
-        - ${{ nodes.generate-rust.outputs.wasm_bindings }}
-      title: "feat: ${{ trigger.backlog_item.title }}"
-      body: |
-        Generated by Archon from backlog item #${{ trigger.backlog_item.id }}.
-
-        Validation: ${{ nodes.validate.outputs.validation_report.summary }}
+assistant: claude
+commands:
+  folder: .archon/commands
+  autoLoad: true
+defaults:
+  loadDefaultCommands: true    # Include 36 default Archon commands
+  loadDefaultWorkflows: true   # Include 15 default Archon workflows
 ```
 
-The DAG structure ensures that `generate-workflow` and `generate-rust` run in parallel after PRD parsing, and both must complete before constitutional validation. The PR is only created if validation passes.
+ExoChain-specific commands are in `.archon/commands/exochain/` and workflows in `.archon/workflows/exochain/`.
+
+## Commands (7)
+
+| Command | Purpose |
+|---------|---------|
+| `exochain-investigate-feedback` | Classify and triage feedback from UI widget AI help menus |
+| `exochain-council-review` | AI-IRB five-panel review (Governance, Legal, Architecture, Security, Operations) |
+| `exochain-generate-syntaxis` | Generate Syntaxis workflows from 23 node types |
+| `exochain-generate-prd` | Client onboarding — translate business requirements to ExoChain PRD |
+| `exochain-implement-feature` | Full-stack implementation (Rust/WASM/Node.js/React/SQL) |
+| `exochain-fix-bug` | Root cause analysis and fix across the stack |
+| `exochain-validate-constitution` | Governance gate — 8 invariants, 10 TNC controls |
+
+## Workflows (4)
+
+### Self-Improvement Cycle (DAG)
+
+The primary workflow. Triggered by feedback from the Configurator UI.
+
+```bash
+archon workflow run exochain-self-improvement-cycle \
+  '{"feedback": "BCTS transitions should animate in real-time", "widget": "bcts-machine", "page": "dashboard"}'
+```
+
+DAG nodes: `ingest-feedback → council-review → generate-syntaxis → implement → validate-constitution → create-pr`
+
+### Client Onboarding (DAG)
+
+End-to-end client configuration from requirements to deployment.
+
+```bash
+archon workflow run exochain-client-onboarding \
+  '{"client": "ACME Corp", "requirements": "Board governance with GDPR consent and fiduciary audit"}'
+```
+
+### Fix Issue (DAG)
+
+GitHub issue to constitutionally-validated PR.
+
+```bash
+archon workflow run exochain-fix-issue-dag '#42'
+```
+
+### Continuous Governance (Loop)
+
+Perpetual loop scanning for constitutional drift. Runs up to 25 iterations.
+
+```bash
+archon workflow run exochain-continuous-governance
+```
+
+## Five-by-Five Discipline Matrix
+
+Each artifact is reviewed across 5 panels and 5 properties (from the Decision Object axioms):
+
+|  | Storable | Diffable | Transferable | Auditable | Contestable |
+|--|----------|----------|--------------|-----------|-------------|
+| **Governance** | Resolution serialized | Version-tracked | Authority chain | HLC timestamps | Challenge mechanism |
+| **Legal** | Court-admissible | Evidence diff | Jurisdiction transfer | Provenance chain | Contestation period |
+| **Architecture** | CBOR canonical | Merkle root | DID-based | Receipt chain | State rollback |
+| **Security** | Encrypted at rest | Tamper-evident | Delegation-scoped | Invariant log | Escalation path |
+| **Operations** | Backup-ready | Rollback-safe | Multi-tenant | Health metrics | Incident response |
+
+## Integration with ExoChain Configurator UI
+
+Every widget in the React UI has an embedded AI help menu (`?` trigger). When users interact with these menus — asking questions, suggesting improvements, or reporting issues — the feedback is captured and dispatched to the gateway-api:
+
+```
+POST /api/feedback
+{
+  "widget": "bcts-machine",
+  "page": "dashboard",
+  "type": "suggestion",
+  "message": "Add real-time state transition animation",
+  "context": { "current_state": "Deliberated", "user_action": "clicked_state" }
+}
+```
+
+The gateway-api:
+1. Assigns a feedback ID and Blake3 hash (provenance)
+2. Stores the item in the backlog (`GET /api/backlog`)
+3. Marks it for ExoForge dispatch (`exochain-self-improvement-cycle`)
+
+The council backlog widget in the UI shows all items with their review status, votes, and disposition.
 
 ## Governance Gate
 
-Every Archon output is adjudicated by the ExoChain kernel before it can be merged. The governance gate validates against the 8 constitutional invariants:
+Every ExoForge-generated PR must pass `exochain-validate-constitution`:
 
-1. **Consent Integrity** -- All affected parties have provided valid consent.
-2. **Identity Verification** -- All actors in the changeset are verified identities.
-3. **Quorum Threshold** -- The originating backlog item met the required council vote quorum.
-4. **Provenance Chain** -- The full provenance chain from suggestion to code is intact and auditable.
-5. **Policy Compliance** -- The changeset does not violate any active governance policies.
-6. **Audit Completeness** -- All actions taken during generation are recorded in the audit trail.
-7. **Separation of Concerns** -- The changeset does not conflate unrelated governance domains.
-8. **Immutability Guarantee** -- The changeset does not mutate previously finalized governance records.
+### 8 Constitutional Invariants
+1. DemocraticLegitimacy
+2. DelegationGovernance
+3. DualControl
+4. HumanOversight
+5. TransparencyAccountability
+6. ConflictAdjudication
+7. TechnologicalHumility
+8. ExistentialSafeguard
 
-If any invariant is violated, the PR is blocked and a detailed violation report is attached as a review comment. The backlog item is returned to the council for remediation.
+### 10 Trust-Critical Non-Negotiable Controls
+TNC-01 through TNC-10: authority chain, human gate, consent, identity, delegation expiry, constitutional binding, quorum, terminal immutability, AI ceiling, evidence bundle.
 
-## Security
+### Architectural Compliance
+- No floating-point arithmetic
+- CBOR canonical serialization
+- Approved crypto primitives only (Blake3, Ed25519)
+- WASM compatibility maintained
 
-Archon operates under strict security constraints:
+If validation fails, the workflow routes to remediation and re-validates. Only constitutionally-compliant code reaches the PR stage.
 
-- **Sandboxed Execution** -- All code generation and validation runs in isolated containers with no network access beyond the target repository and governance endpoints.
-- **Audit Trail** -- Every action Archon takes (file reads, writes, API calls, command executions) is logged to the ExoChain audit-api service.
-- **Scoped Credentials** -- Archon receives short-lived, narrowly-scoped tokens that grant access only to the target repository and governance APIs.
-- **No Direct Merge** -- Archon can only create pull requests. Merge authority remains with the governance gate and council-approved automation rules.
-- **Reproducibility** -- Every workflow execution is deterministic and reproducible given the same inputs and WASM engine version.
+## Deploying for Production
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for full production deployment instructions including Docker, Nginx, SSL, and systemd configuration.
+
+For ExoForge, run it as a background service:
+
+```bash
+# Start ExoForge server (handles webhook triggers)
+cd /path/to/exoforge
+bun run dev:server
+
+# Or via systemd
+sudo systemctl start exoforge
+```
+
+Configure the ExoChain gateway-api to dispatch to ExoForge by setting:
+
+```
+EXOFORGE_URL=http://localhost:4000
+```

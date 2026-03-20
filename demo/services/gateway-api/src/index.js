@@ -227,7 +227,47 @@ const server = http.createServer(async (req, res) => {
       'GET  /api/audit', 'POST /api/crypto/hash', 'POST /api/crypto/keypair',
       'POST /api/crypto/sign', 'POST /api/crypto/verify', 'GET  /api/consent',
       'GET  /api/bcts/transitions?state=Draft', 'POST /api/identity/shamir/split',
+      'POST /api/feedback', 'GET  /api/backlog', 'POST /api/backlog/vote',
     ]});
+
+  // ── Feedback Ingestion (ExoForge self-improvement cycle) ──
+  if (method === 'POST' && path === '/api/feedback') {
+    const body = await parseBody(req);
+    const feedbackId = `FB-${Date.now().toString(36).toUpperCase()}`;
+    const item = {
+      id: feedbackId,
+      widget: body.widget || 'unknown',
+      page: body.page || 'unknown',
+      type: body.type || 'suggestion',
+      message: body.message || '',
+      context: body.context || {},
+      timestamp: new Date().toISOString(),
+      status: 'ingested',
+      exoforge_workflow: 'exochain-self-improvement-cycle',
+      council_review: null,
+      disposition: 'pending',
+    };
+    // Store in-memory backlog (persisted to DB when available)
+    if (!global._backlog) global._backlog = [];
+    global._backlog.unshift(item);
+    // Hash the feedback for provenance
+    const hash = wasm.wasm_hash_bytes(Buffer.from(JSON.stringify(item)));
+    return json(res, 201, { feedback_id: feedbackId, hash, status: 'ingested', exoforge_workflow: 'exochain-self-improvement-cycle', message: 'Feedback ingested into ExoForge self-improvement cycle' });
+  }
+
+  if (method === 'GET' && path === '/api/backlog') {
+    return json(res, 200, global._backlog || []);
+  }
+
+  if (method === 'POST' && path === '/api/backlog/vote') {
+    const body = await parseBody(req);
+    if (!global._backlog) return json(res, 404, { error: 'No backlog items' });
+    const item = global._backlog.find(i => i.id === body.id);
+    if (!item) return json(res, 404, { error: 'Item not found' });
+    item.votes = (item.votes || 0) + (body.vote === 'up' ? 1 : -1);
+    return json(res, 200, item);
+  }
+
   } catch (e) {
     console.error('Request error:', e);
     json(res, 500, { error: e.message });
