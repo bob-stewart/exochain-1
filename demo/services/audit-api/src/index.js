@@ -21,68 +21,76 @@ function parseBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
-    return res.end();
-  }
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  try {
-    if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'audit-api' });
-
-    // ── List Audit Entries ──
-    if (url.pathname === '/api/entries' && req.method === 'GET') {
-      const limit = url.searchParams.get('limit') || 50;
-      const { rows } = await pool.query('SELECT * FROM audit_entries ORDER BY sequence DESC LIMIT $1', [limit]);
-      return json(res, 200, rows);
+export function createHandler(poolDep, wasmDep) {
+  return async (req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
+      return res.end();
     }
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // ── Append Audit Entry ──
-    if (url.pathname === '/api/entries' && req.method === 'POST') {
-      const { actor_did, action, result, evidence_hash } = await parseBody(req);
-      const auditResult = wasm.wasm_audit_append(actor_did, action, result, evidence_hash || '0'.repeat(64));
+    try {
+      if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'audit-api' });
 
-      // Also persist to DB
-      const { rows: [last] } = await pool.query('SELECT COALESCE(MAX(sequence), -1) as seq, COALESCE(MAX(entry_hash), $1) as prev FROM audit_entries', ['0'.repeat(64)]);
-      const eventHash = wasm.wasm_hash_bytes(new Uint8Array(Buffer.from(`${action}:${result}`)));
-
-      await pool.query(
-        'INSERT INTO audit_entries (sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, entry_hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
-        [last.seq + 1, last.prev, eventHash, action, actor_did, 'exochain-foundation', Date.now(), auditResult.head_hash]
-      );
-
-      return json(res, 201, { entry_count: auditResult.entries, head_hash: auditResult.head_hash });
-    }
-
-    // ── Verify Chain Integrity ──
-    if (url.pathname === '/api/verify' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT * FROM audit_entries ORDER BY sequence ASC');
-
-      // Verify hash chain manually
-      let valid = true;
-      let error = null;
-      for (let i = 1; i < rows.length; i++) {
-        if (rows[i].prev_hash !== rows[i - 1].entry_hash) {
-          valid = false;
-          error = `Chain break at sequence ${rows[i].sequence}: prev_hash doesn't match previous entry_hash`;
-          break;
-        }
+      // ── List Audit Entries ──
+      if (url.pathname === '/api/entries' && req.method === 'GET') {
+        const limit = url.searchParams.get('limit') || 50;
+        const { rows } = await poolDep.query('SELECT * FROM audit_entries ORDER BY sequence DESC LIMIT $1', [limit]);
+        return json(res, 200, rows);
       }
 
-      return json(res, 200, {
-        intact: valid,
-        entries_checked: rows.length,
-        head_hash: rows.length > 0 ? rows[rows.length - 1].entry_hash : null,
-        error,
-      });
+      // ── Append Audit Entry ──
+      if (url.pathname === '/api/entries' && req.method === 'POST') {
+        const { actor_did, action, result, evidence_hash } = await parseBody(req);
+        const auditResult = wasmDep.wasm_audit_append(actor_did, action, result, evidence_hash || '0'.repeat(64));
+
+        // Also persist to DB
+        const { rows: [last] } = await poolDep.query('SELECT COALESCE(MAX(sequence), -1) as seq, COALESCE(MAX(entry_hash), $1) as prev FROM audit_entries', ['0'.repeat(64)]);
+        const eventHash = wasmDep.wasm_hash_bytes(new Uint8Array(Buffer.from(`${action}:${result}`)));
+
+        await poolDep.query(
+          'INSERT INTO audit_entries (sequence, prev_hash, event_hash, event_type, actor, tenant_id, timestamp_physical_ms, entry_hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+          [last.seq + 1, last.prev, eventHash, action, actor_did, 'exochain-foundation', Date.now(), auditResult.head_hash]
+        );
+
+        return json(res, 201, { entry_count: auditResult.entries, head_hash: auditResult.head_hash });
+      }
+
+      // ── Verify Chain Integrity ──
+      if (url.pathname === '/api/verify' && req.method === 'GET') {
+        const { rows } = await poolDep.query('SELECT * FROM audit_entries ORDER BY sequence ASC');
+
+        // Verify hash chain manually
+        let valid = true;
+        let error = null;
+        for (let i = 1; i < rows.length; i++) {
+          if (rows[i].prev_hash !== rows[i - 1].entry_hash) {
+            valid = false;
+            error = `Chain break at sequence ${rows[i].sequence}: prev_hash doesn't match previous entry_hash`;
+            break;
+          }
+        }
+
+        return json(res, 200, {
+          intact: valid,
+          entries_checked: rows.length,
+          head_hash: rows.length > 0 ? rows[rows.length - 1].entry_hash : null,
+          error,
+        });
+      }
+
+      json(res, 404, { error: 'Not found' });
+    } catch (e) {
+      console.error('Error:', e);
+      json(res, 500, { error: e.message });
     }
+  };
+}
 
-    json(res, 404, { error: 'Not found' });
-  } catch (e) {
-    console.error('Error:', e);
-    json(res, 500, { error: e.message });
-  }
-});
+const server = http.createServer(createHandler(pool, wasm));
 
-server.listen(PORT, () => console.log(`[audit-api] Running on :${PORT}`));
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => console.log(`[audit-api] Running on :${PORT}`));
+}
+
+export { server };

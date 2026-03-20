@@ -22,7 +22,11 @@ function parseBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
+export function createHandler(poolDep, wasmDep) {
+  // In-process backlog store (scoped per handler instance for testability)
+  const _backlog = [];
+
+  return async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
     return res.end();
@@ -33,16 +37,16 @@ const server = http.createServer(async (req, res) => {
   try {
     // ── Health ──
     if (url.pathname === '/health') {
-      const db = await pool.query('SELECT 1');
+      await poolDep.query('SELECT 1');
       return json(res, 200, { status: 'ok', service: 'gateway-api', db: 'connected', wasm: true });
     }
 
     // ── System Info ──
     if (url.pathname === '/api/system' && req.method === 'GET') {
-      const invariants = wasm.wasm_enforce_invariants('{}');
-      const mcpRules = wasm.wasm_mcp_rules();
-      const stages = wasm.wasm_workflow_stages();
-      const transitions = wasm.wasm_bcts_valid_transitions('"Draft"');
+      const invariants = wasmDep.wasm_enforce_invariants('{}');
+      const mcpRules = wasmDep.wasm_mcp_rules();
+      const stages = wasmDep.wasm_workflow_stages();
+      const transitions = wasmDep.wasm_bcts_valid_transitions('"Draft"');
       return json(res, 200, {
         constitutional_invariants: invariants.invariants,
         mcp_rules: mcpRules,
@@ -53,19 +57,19 @@ const server = http.createServer(async (req, res) => {
 
     // ── Users ──
     if (url.pathname === '/api/users' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT did, display_name, email, roles, status, pace_status FROM users ORDER BY display_name');
+      const { rows } = await poolDep.query('SELECT did, display_name, email, roles, status, pace_status FROM users ORDER BY display_name');
       return json(res, 200, rows);
     }
 
     // ── Identity Scores ──
     if (url.pathname === '/api/identity/scores' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT i.did, u.display_name, i.score, i.tier, i.factors FROM identity_scores i JOIN users u ON u.did = i.did ORDER BY i.score DESC');
+      const { rows } = await poolDep.query('SELECT i.did, u.display_name, i.score, i.tier, i.factors FROM identity_scores i JOIN users u ON u.did = i.did ORDER BY i.score DESC');
       return json(res, 200, rows);
     }
 
     // ── Decisions: List ──
     if (url.pathname === '/api/decisions' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT id_hash, title, status, decision_class, author, created_at_ms FROM decisions ORDER BY created_at_ms DESC');
+      const { rows } = await poolDep.query('SELECT id_hash, title, status, decision_class, author, created_at_ms FROM decisions ORDER BY created_at_ms DESC');
       return json(res, 200, rows);
     }
 
@@ -75,29 +79,29 @@ const server = http.createServer(async (req, res) => {
       const { title, decision_class, author_did } = body;
 
       // 1. Verify author exists
-      const { rows: [author] } = await pool.query('SELECT did, roles, pace_status FROM users WHERE did = $1', [author_did]);
+      const { rows: [author] } = await poolDep.query('SELECT did, roles, pace_status FROM users WHERE did = $1', [author_did]);
       if (!author) return json(res, 404, { error: 'Author not found' });
       if (author.pace_status !== 'Enrolled') return json(res, 403, { error: 'Author not PACE enrolled' });
 
       // 2. Get constitution hash
-      const { rows: [constitution] } = await pool.query(
+      const { rows: [constitution] } = await poolDep.query(
         'SELECT version, payload FROM constitutions WHERE tenant_id = $1 ORDER BY version DESC LIMIT 1',
         ['exochain-foundation']
       );
-      const constitutionHash = wasm.wasm_hash_structured(JSON.stringify(constitution.payload));
+      const constitutionHash = wasmDep.wasm_hash_structured(JSON.stringify(constitution.payload));
 
       // 3. Create DecisionObject via WASM
-      const decision = wasm.wasm_create_decision(title, JSON.stringify(decision_class || 'Operational'), constitutionHash);
+      const decision = wasmDep.wasm_create_decision(title, JSON.stringify(decision_class || 'Operational'), constitutionHash);
 
       // 4. Persist to DB
-      await pool.query(
+      await poolDep.query(
         'INSERT INTO decisions (id_hash, tenant_id, status, title, decision_class, author, created_at_ms, constitution_version, payload) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
         [decision.id, 'exochain-foundation', 'Draft', title, decision_class || 'Operational', author_did, Date.now(), constitution.version, JSON.stringify(decision)]
       );
 
       // 5. Audit trail
-      const evidenceHash = wasm.wasm_hash_bytes(new Uint8Array(Buffer.from(JSON.stringify(decision))));
-      wasm.wasm_audit_append(author_did, 'CreateDecision', 'success', evidenceHash);
+      const evidenceHash = wasmDep.wasm_hash_bytes(new Uint8Array(Buffer.from(JSON.stringify(decision))));
+      wasmDep.wasm_audit_append(author_did, 'CreateDecision', 'success', evidenceHash);
 
       return json(res, 201, { decision, constitution_version: constitution.version });
     }
@@ -108,27 +112,27 @@ const server = http.createServer(async (req, res) => {
       const { decision_id, voter_did, choice, rationale } = body;
 
       // Load decision
-      const { rows: [row] } = await pool.query('SELECT payload FROM decisions WHERE id_hash = $1', [decision_id]);
+      const { rows: [row] } = await poolDep.query('SELECT payload FROM decisions WHERE id_hash = $1', [decision_id]);
       if (!row) return json(res, 404, { error: 'Decision not found' });
 
       // Check clearance
       const clearancePolicy = { actions: { Vote: { required_level: 'Governor' } } };
-      const clearance = wasm.wasm_check_clearance(voter_did, 'Vote', JSON.stringify(clearancePolicy));
+      const clearance = wasmDep.wasm_check_clearance(voter_did, 'Vote', JSON.stringify(clearancePolicy));
       if (clearance.status !== 'Granted') return json(res, 403, { error: 'Insufficient clearance', details: clearance });
 
       // Check conflicts
       const action = { action_id: decision_id, actor_did: voter_did, affected_dids: [], description: `Vote on ${decision_id}` };
-      const conflicts = wasm.wasm_check_conflicts(voter_did, JSON.stringify(action), '[]');
+      const conflicts = wasmDep.wasm_check_conflicts(voter_did, JSON.stringify(action), '[]');
       if (conflicts.must_recuse) return json(res, 403, { error: 'Must recuse due to conflict of interest', conflicts });
 
       // Add vote via WASM
-      const kp = wasm.wasm_generate_keypair();
+      const kp = wasmDep.wasm_generate_keypair();
       const vote = { voter: voter_did, choice, rationale, signature: kp.public_key, timestamp_ms: Date.now() };
 
-      const updated = wasm.wasm_add_vote(JSON.stringify(row.payload), JSON.stringify(vote));
+      const updated = wasmDep.wasm_add_vote(JSON.stringify(row.payload), JSON.stringify(vote));
 
       // Persist
-      await pool.query('UPDATE decisions SET payload = $1 WHERE id_hash = $2', [JSON.stringify(updated), decision_id]);
+      await poolDep.query('UPDATE decisions SET payload = $1 WHERE id_hash = $2', [JSON.stringify(updated), decision_id]);
 
       return json(res, 200, { vote_recorded: true, decision: updated });
     }
@@ -138,28 +142,28 @@ const server = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       const { decision_id, to_state, actor_did } = body;
 
-      const { rows: [row] } = await pool.query('SELECT payload, status FROM decisions WHERE id_hash = $1', [decision_id]);
+      const { rows: [row] } = await poolDep.query('SELECT payload, status FROM decisions WHERE id_hash = $1', [decision_id]);
       if (!row) return json(res, 404, { error: 'Decision not found' });
 
-      const updated = wasm.wasm_transition_decision(JSON.stringify(row.payload), JSON.stringify(to_state), actor_did);
+      const updated = wasmDep.wasm_transition_decision(JSON.stringify(row.payload), JSON.stringify(to_state), actor_did);
 
-      await pool.query('UPDATE decisions SET payload = $1, status = $2 WHERE id_hash = $3', [JSON.stringify(updated), to_state, decision_id]);
+      await poolDep.query('UPDATE decisions SET payload = $1, status = $2 WHERE id_hash = $3', [JSON.stringify(updated), to_state, decision_id]);
 
       // Check if terminal
-      const isTerminal = wasm.wasm_decision_is_terminal(JSON.stringify(updated));
+      const isTerminal = wasmDep.wasm_decision_is_terminal(JSON.stringify(updated));
 
       return json(res, 200, { decision: updated, new_state: to_state, is_terminal: isTerminal });
     }
 
     // ── Delegations ──
     if (url.pathname === '/api/delegations' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT id_hash, delegator, delegatee, payload, created_at_ms, expires_at FROM delegations ORDER BY created_at_ms DESC');
+      const { rows } = await poolDep.query('SELECT id_hash, delegator, delegatee, payload, created_at_ms, expires_at FROM delegations ORDER BY created_at_ms DESC');
       return json(res, 200, rows);
     }
 
     // ── Constitution ──
     if (url.pathname === '/api/constitution' && req.method === 'GET') {
-      const { rows: [constitution] } = await pool.query(
+      const { rows: [constitution] } = await poolDep.query(
         'SELECT * FROM constitutions WHERE tenant_id = $1 ORDER BY version DESC LIMIT 1',
         ['exochain-foundation']
       );
@@ -168,47 +172,47 @@ const server = http.createServer(async (req, res) => {
 
     // ── Audit Trail ──
     if (url.pathname === '/api/audit' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT * FROM audit_entries ORDER BY sequence DESC LIMIT 50');
+      const { rows } = await poolDep.query('SELECT * FROM audit_entries ORDER BY sequence DESC LIMIT 50');
       return json(res, 200, rows);
     }
 
     // ── Crypto: Hash ──
     if (url.pathname === '/api/crypto/hash' && req.method === 'POST') {
       const body = await parseBody(req);
-      const hash = wasm.wasm_hash_structured(JSON.stringify(body.data || body));
+      const hash = wasmDep.wasm_hash_structured(JSON.stringify(body.data || body));
       return json(res, 200, { hash });
     }
 
     // ── Crypto: Keypair ──
     if (url.pathname === '/api/crypto/keypair' && req.method === 'POST') {
-      const kp = wasm.wasm_generate_keypair();
+      const kp = wasmDep.wasm_generate_keypair();
       return json(res, 200, kp);
     }
 
     // ── Crypto: Sign + Verify ──
     if (url.pathname === '/api/crypto/sign' && req.method === 'POST') {
       const body = await parseBody(req);
-      const sig = wasm.wasm_sign(new Uint8Array(Buffer.from(body.message)), body.secret_key);
+      const sig = wasmDep.wasm_sign(new Uint8Array(Buffer.from(body.message)), body.secret_key);
       return json(res, 200, { signature: sig });
     }
 
     if (url.pathname === '/api/crypto/verify' && req.method === 'POST') {
       const body = await parseBody(req);
-      const valid = wasm.wasm_verify(new Uint8Array(Buffer.from(body.message)), body.signature, body.public_key);
+      const valid = wasmDep.wasm_verify(new Uint8Array(Buffer.from(body.message)), body.signature, body.public_key);
       return json(res, 200, { valid });
     }
 
     // ── Consent Anchors ──
     if (url.pathname === '/api/consent' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT * FROM consent_anchors ORDER BY granted_at_ms DESC');
+      const { rows } = await poolDep.query('SELECT * FROM consent_anchors ORDER BY granted_at_ms DESC');
       return json(res, 200, rows);
     }
 
     // ── BCTS State Machine ──
     if (url.pathname === '/api/bcts/transitions' && req.method === 'GET') {
       const state = url.searchParams.get('state') || 'Draft';
-      const transitions = wasm.wasm_bcts_valid_transitions(JSON.stringify(state));
-      const isTerminal = wasm.wasm_bcts_is_terminal(JSON.stringify(state));
+      const transitions = wasmDep.wasm_bcts_valid_transitions(JSON.stringify(state));
+      const isTerminal = wasmDep.wasm_bcts_is_terminal(JSON.stringify(state));
       return json(res, 200, { state, transitions, is_terminal: isTerminal });
     }
 
@@ -216,7 +220,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/identity/shamir/split' && req.method === 'POST') {
       const body = await parseBody(req);
       const secret = new Uint8Array(Buffer.from(body.secret || 'demo-secret'));
-      const shares = wasm.wasm_shamir_split(secret, body.threshold || 2, body.shares || 3);
+      const shares = wasmDep.wasm_shamir_split(secret, body.threshold || 2, body.shares || 3);
       return json(res, 200, { shares, threshold: body.threshold || 2, total: body.shares || 3 });
     }
 
@@ -237,9 +241,8 @@ const server = http.createServer(async (req, res) => {
         council_review: null,
         disposition: 'pending',
       };
-      if (!global._backlog) global._backlog = [];
-      global._backlog.unshift(item);
-      const hash = wasm.wasm_hash_bytes(Buffer.from(JSON.stringify(item)));
+      _backlog.unshift(item);
+      const hash = wasmDep.wasm_hash_bytes(Buffer.from(JSON.stringify(item)));
       return json(res, 201, {
         feedback_id: feedbackId,
         hash,
@@ -251,16 +254,16 @@ const server = http.createServer(async (req, res) => {
 
     // ── ExoForge: Backlog Listing ──
     if (url.pathname === '/api/backlog' && req.method === 'GET') {
-      return json(res, 200, global._backlog || []);
+      return json(res, 200, _backlog);
     }
 
     // ── ExoForge: Council Vote on Backlog Item ──
     if (url.pathname === '/api/backlog/vote' && req.method === 'POST') {
       const body = await parseBody(req);
-      if (!global._backlog || global._backlog.length === 0) {
+      if (_backlog.length === 0) {
         return json(res, 404, { error: 'No backlog items' });
       }
-      const item = global._backlog.find(i => i.id === body.id);
+      const item = _backlog.find(i => i.id === body.id);
       if (!item) return json(res, 404, { error: 'Item not found' });
       if (!item.votes) item.votes = { approve: 0, reject: 0, defer: 0 };
       const vote = body.vote || 'approve';
@@ -280,8 +283,7 @@ const server = http.createServer(async (req, res) => {
     // ── ExoForge: Backlog Item Status Update ──
     if (url.pathname === '/api/backlog/status' && req.method === 'POST') {
       const body = await parseBody(req);
-      if (!global._backlog) return json(res, 404, { error: 'No backlog items' });
-      const item = global._backlog.find(i => i.id === body.id);
+      const item = _backlog.find(i => i.id === body.id);
       if (!item) return json(res, 404, { error: 'Item not found' });
       item.status = body.status;
       if (body.exoforge_run_id) item.exoforge_run_id = body.exoforge_run_id;
@@ -304,9 +306,16 @@ const server = http.createServer(async (req, res) => {
     console.error('Request error:', e);
     json(res, 500, { error: e.message });
   }
-});
+  }; // end handler
+}
 
-server.listen(PORT, () => {
-  console.log(`[gateway-api] ExoChain Gateway running on :${PORT}`);
-  console.log(`[gateway-api] WASM loaded — 45 governance functions available`);
-});
+const server = http.createServer(createHandler(pool, wasm));
+
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => {
+    console.log(`[gateway-api] ExoChain Gateway running on :${PORT}`);
+    console.log(`[gateway-api] WASM loaded — 45 governance functions available`);
+  });
+}
+
+export { server };

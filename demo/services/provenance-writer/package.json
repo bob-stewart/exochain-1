@@ -7,5 +7,10 @@
     "@exochain/exochain-wasm": "*",
     "@exochain/shared": "*",
     "pg": "^8.13.0"
-  }
+  },
+  "scripts": {
+    "test": "NODE_ENV=test node --test test/index.test.js",
+    "test:coverage": "NODE_ENV=test node --experimental-test-coverage --test test/index.test.js"
+  },
+  "devDependencies": {}
 }

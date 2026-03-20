@@ -1,0 +1,118 @@
+# ExoChain Demo Platform Test Suite
+#
+# Phase 1 (report-only): Coverage is collected and uploaded as an artifact.
+# Thresholds are NOT enforced yet — see EXOCHAIN-REM-014.
+# Phase 2 will add --coverage threshold enforcement once all suites stabilise.
+#
+# Suites:
+#   1. WASM smoke + boundary tests (42 assertions)
+#   2. Node.js microservice unit tests — 7 services, node:test (101 tests)
+#   3. React/TypeScript UI — Vitest + @testing-library/react (88 tests)
+
+name: Demo Platform Tests
+
+on:
+  push:
+    paths:
+      - 'demo/**'
+      - 'web/**'
+      - '.github/workflows/demo-tests.yml'
+  pull_request:
+    paths:
+      - 'demo/**'
+      - 'web/**'
+      - '.github/workflows/demo-tests.yml'
+
+jobs:
+  # ── 1. WASM stub smoke + boundary tests ──────────────────────────────────
+  wasm-tests:
+    name: "Demo — WASM stub tests (42)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: demo/package-lock.json
+      - name: Install demo dependencies
+        run: npm install
+      - name: Run WASM stub tests
+        run: node packages/exochain-wasm/test.mjs
+
+  # ── 2. Node.js microservice unit tests ───────────────────────────────────
+  service-tests:
+    name: "Demo — Service unit tests (101)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: demo/package-lock.json
+      - name: Install demo dependencies
+        run: npm install
+      - name: Run all service tests
+        run: NODE_ENV=test node --test services/*/test/index.test.js
+      - name: Collect service coverage (Phase 1 — report-only)
+        run: |
+          NODE_ENV=test node --experimental-test-coverage \
+            --test services/*/test/index.test.js 2>&1 | tee coverage-services.txt || true
+      - name: Upload service coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-coverage-report
+          path: demo/coverage-services.txt
+
+  # ── 3. React UI tests ────────────────────────────────────────────────────
+  ui-tests:
+    name: "Demo — React UI tests (88)"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+      - name: Install UI dependencies
+        run: npm install
+      - name: Run React UI tests
+        run: npm test
+      - name: Collect UI coverage (Phase 1 — report-only)
+        run: npm run test:coverage 2>&1 | tee coverage-ui.txt || true
+      - name: Upload UI coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-coverage-report
+          path: |
+            web/coverage-ui.txt
+            web/coverage/
+
+  # ── All demo gates ────────────────────────────────────────────────────────
+  demo-all-gates:
+    name: "Demo — All test gates"
+    runs-on: ubuntu-latest
+    needs:
+      - wasm-tests
+      - service-tests
+      - ui-tests
+    steps:
+      - name: All demo test suites passed
+        run: |
+          echo "WASM stub tests:    ✓"
+          echo "Service unit tests: ✓"
+          echo "React UI tests:     ✓"
+          echo ""
+          echo "Phase 1 (report-only) complete."
+          echo "Phase 2 threshold enforcement: 75% branch / 80% line (pending EXOCHAIN-REM-014 close)"

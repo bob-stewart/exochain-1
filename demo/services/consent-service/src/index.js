@@ -21,45 +21,53 @@ function parseBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
-    return res.end();
-  }
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  try {
-    if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'consent-service' });
-
-    // ── List Consent Anchors ──
-    if (url.pathname === '/api/anchors' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT * FROM consent_anchors ORDER BY granted_at_ms DESC');
-      return json(res, 200, rows);
+export function createHandler(poolDep, wasmDep) {
+  return async (req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
+      return res.end();
     }
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // ── Propose Bailment ──
-    if (url.pathname === '/api/bailment/propose' && req.method === 'POST') {
-      const { bailor_did, bailee_did, terms, bailment_type } = await parseBody(req);
-      const bailment = wasm.wasm_propose_bailment(
-        bailor_did, bailee_did,
-        new Uint8Array(Buffer.from(terms || '')),
-        JSON.stringify(bailment_type || 'Processing')
-      );
-      return json(res, 200, bailment);
+    try {
+      if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'consent-service' });
+
+      // ── List Consent Anchors ──
+      if (url.pathname === '/api/anchors' && req.method === 'GET') {
+        const { rows } = await poolDep.query('SELECT * FROM consent_anchors ORDER BY granted_at_ms DESC');
+        return json(res, 200, rows);
+      }
+
+      // ── Propose Bailment ──
+      if (url.pathname === '/api/bailment/propose' && req.method === 'POST') {
+        const { bailor_did, bailee_did, terms, bailment_type } = await parseBody(req);
+        const bailment = wasmDep.wasm_propose_bailment(
+          bailor_did, bailee_did,
+          new Uint8Array(Buffer.from(terms || '')),
+          JSON.stringify(bailment_type || 'Processing')
+        );
+        return json(res, 200, bailment);
+      }
+
+      // ── Check Bailment Active ──
+      if (url.pathname === '/api/bailment/active' && req.method === 'POST') {
+        const { bailment } = await parseBody(req);
+        const active = wasmDep.wasm_bailment_is_active(JSON.stringify(bailment));
+        return json(res, 200, { active });
+      }
+
+      json(res, 404, { error: 'Not found' });
+    } catch (e) {
+      console.error('Error:', e);
+      json(res, 500, { error: e.message });
     }
+  };
+}
 
-    // ── Check Bailment Active ──
-    if (url.pathname === '/api/bailment/active' && req.method === 'POST') {
-      const { bailment } = await parseBody(req);
-      const active = wasm.wasm_bailment_is_active(JSON.stringify(bailment));
-      return json(res, 200, { active });
-    }
+const server = http.createServer(createHandler(pool, wasm));
 
-    json(res, 404, { error: 'Not found' });
-  } catch (e) {
-    console.error('Error:', e);
-    json(res, 500, { error: e.message });
-  }
-});
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => console.log(`[consent-service] Running on :${PORT}`));
+}
 
-server.listen(PORT, () => console.log(`[consent-service] Running on :${PORT}`));
+export { server };

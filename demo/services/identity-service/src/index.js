@@ -21,86 +21,94 @@ function parseBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
-    return res.end();
-  }
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  try {
-    if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'identity-service' });
-
-    // ── List Users ──
-    if (url.pathname === '/api/users' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT did, display_name, email, roles, status, pace_status FROM users');
-      return json(res, 200, rows);
+export function createHandler(poolDep, wasmDep) {
+  return async (req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
+      return res.end();
     }
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // ── Identity Scores ──
-    if (url.pathname === '/api/scores' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT i.*, u.display_name FROM identity_scores i JOIN users u ON u.did = i.did');
-      return json(res, 200, rows);
+    try {
+      if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'identity-service' });
+
+      // ── List Users ──
+      if (url.pathname === '/api/users' && req.method === 'GET') {
+        const { rows } = await poolDep.query('SELECT did, display_name, email, roles, status, pace_status FROM users');
+        return json(res, 200, rows);
+      }
+
+      // ── Identity Scores ──
+      if (url.pathname === '/api/scores' && req.method === 'GET') {
+        const { rows } = await poolDep.query('SELECT i.*, u.display_name FROM identity_scores i JOIN users u ON u.did = i.did');
+        return json(res, 200, rows);
+      }
+
+      // ── Enrollment Log ──
+      if (url.pathname === '/api/enrollment' && req.method === 'GET') {
+        const { rows } = await poolDep.query('SELECT * FROM enrollment_log ORDER BY timestamp DESC');
+        return json(res, 200, rows);
+      }
+
+      // ── Shamir Split ──
+      if (url.pathname === '/api/shamir/split' && req.method === 'POST') {
+        const { secret, threshold, shares } = await parseBody(req);
+        const secretBytes = new Uint8Array(Buffer.from(secret || 'demo-secret'));
+        const result = wasmDep.wasm_shamir_split(secretBytes, threshold || 2, shares || 3);
+        return json(res, 200, { shares: result, threshold: threshold || 2, total: shares || 3 });
+      }
+
+      // ── Shamir Reconstruct ──
+      if (url.pathname === '/api/shamir/reconstruct' && req.method === 'POST') {
+        const { shares, threshold, total } = await parseBody(req);
+        const result = wasmDep.wasm_shamir_reconstruct(JSON.stringify(shares), threshold, total);
+        return json(res, 200, result);
+      }
+
+      // ── PACE Resolve ──
+      if (url.pathname === '/api/pace/resolve' && req.method === 'POST') {
+        const { config, state } = await parseBody(req);
+        const result = wasmDep.wasm_pace_resolve(JSON.stringify(config), JSON.stringify(state));
+        return json(res, 200, result);
+      }
+
+      // ── PACE Escalate ──
+      if (url.pathname === '/api/pace/escalate' && req.method === 'POST') {
+        const { state } = await parseBody(req);
+        const result = wasmDep.wasm_pace_escalate(JSON.stringify(state));
+        return json(res, 200, { new_state: result });
+      }
+
+      // ── Risk Assessment ──
+      if (url.pathname === '/api/risk/assess' && req.method === 'POST') {
+        const { subject_did, attester_did, evidence, level, validity_ms } = await parseBody(req);
+        const result = wasmDep.wasm_assess_risk(
+          subject_did, attester_did,
+          new Uint8Array(Buffer.from(evidence || '')),
+          JSON.stringify(level || 'Medium'),
+          BigInt(validity_ms || 86400000)
+        );
+        return json(res, 200, result);
+      }
+
+      // ── Generate Keypair ──
+      if (url.pathname === '/api/keypair' && req.method === 'POST') {
+        const kp = wasmDep.wasm_generate_keypair();
+        return json(res, 200, kp);
+      }
+
+      json(res, 404, { error: 'Not found' });
+    } catch (e) {
+      console.error('Error:', e);
+      json(res, 500, { error: e.message });
     }
+  };
+}
 
-    // ── Enrollment Log ──
-    if (url.pathname === '/api/enrollment' && req.method === 'GET') {
-      const { rows } = await pool.query('SELECT * FROM enrollment_log ORDER BY timestamp DESC');
-      return json(res, 200, rows);
-    }
+const server = http.createServer(createHandler(pool, wasm));
 
-    // ── Shamir Split ──
-    if (url.pathname === '/api/shamir/split' && req.method === 'POST') {
-      const { secret, threshold, shares } = await parseBody(req);
-      const secretBytes = new Uint8Array(Buffer.from(secret || 'demo-secret'));
-      const result = wasm.wasm_shamir_split(secretBytes, threshold || 2, shares || 3);
-      return json(res, 200, { shares: result, threshold: threshold || 2, total: shares || 3 });
-    }
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => console.log(`[identity-service] Running on :${PORT}`));
+}
 
-    // ── Shamir Reconstruct ──
-    if (url.pathname === '/api/shamir/reconstruct' && req.method === 'POST') {
-      const { shares, threshold, total } = await parseBody(req);
-      const result = wasm.wasm_shamir_reconstruct(JSON.stringify(shares), threshold, total);
-      return json(res, 200, result);
-    }
-
-    // ── PACE Resolve ──
-    if (url.pathname === '/api/pace/resolve' && req.method === 'POST') {
-      const { config, state } = await parseBody(req);
-      const result = wasm.wasm_pace_resolve(JSON.stringify(config), JSON.stringify(state));
-      return json(res, 200, result);
-    }
-
-    // ── PACE Escalate ──
-    if (url.pathname === '/api/pace/escalate' && req.method === 'POST') {
-      const { state } = await parseBody(req);
-      const result = wasm.wasm_pace_escalate(JSON.stringify(state));
-      return json(res, 200, { new_state: result });
-    }
-
-    // ── Risk Assessment ──
-    if (url.pathname === '/api/risk/assess' && req.method === 'POST') {
-      const { subject_did, attester_did, evidence, level, validity_ms } = await parseBody(req);
-      const result = wasm.wasm_assess_risk(
-        subject_did, attester_did,
-        new Uint8Array(Buffer.from(evidence || '')),
-        JSON.stringify(level || 'Medium'),
-        BigInt(validity_ms || 86400000)
-      );
-      return json(res, 200, result);
-    }
-
-    // ── Generate Keypair ──
-    if (url.pathname === '/api/keypair' && req.method === 'POST') {
-      const kp = wasm.wasm_generate_keypair();
-      return json(res, 200, kp);
-    }
-
-    json(res, 404, { error: 'Not found' });
-  } catch (e) {
-    console.error('Error:', e);
-    json(res, 500, { error: e.message });
-  }
-});
-
-server.listen(PORT, () => console.log(`[identity-service] Running on :${PORT}`));
+export { server };

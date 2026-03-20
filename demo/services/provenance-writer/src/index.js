@@ -21,60 +21,68 @@ function parseBody(req) {
   });
 }
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
-    return res.end();
-  }
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  try {
-    if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'provenance-writer' });
-
-    // ── Create Evidence ──
-    if (url.pathname === '/api/evidence/create' && req.method === 'POST') {
-      const { content, type_tag, creator_did } = await parseBody(req);
-      const evidence = wasm.wasm_create_evidence(
-        new Uint8Array(Buffer.from(content || '')),
-        type_tag || 'document',
-        creator_did
-      );
-      return json(res, 201, evidence);
+export function createHandler(poolDep, wasmDep) {
+  return async (req, res) => {
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
+      return res.end();
     }
+    const url = new URL(req.url, `http://${req.headers.host}`);
 
-    // ── Verify Chain of Custody ──
-    if (url.pathname === '/api/evidence/verify' && req.method === 'POST') {
-      const { evidence } = await parseBody(req);
-      const result = wasm.wasm_verify_chain_of_custody(JSON.stringify(evidence));
-      return json(res, 200, result);
+    try {
+      if (url.pathname === '/health') return json(res, 200, { status: 'ok', service: 'provenance-writer' });
+
+      // ── Create Evidence ──
+      if (url.pathname === '/api/evidence/create' && req.method === 'POST') {
+        const { content, type_tag, creator_did } = await parseBody(req);
+        const evidence = wasmDep.wasm_create_evidence(
+          new Uint8Array(Buffer.from(content || '')),
+          type_tag || 'document',
+          creator_did
+        );
+        return json(res, 201, evidence);
+      }
+
+      // ── Verify Chain of Custody ──
+      if (url.pathname === '/api/evidence/verify' && req.method === 'POST') {
+        const { evidence } = await parseBody(req);
+        const result = wasmDep.wasm_verify_chain_of_custody(JSON.stringify(evidence));
+        return json(res, 200, result);
+      }
+
+      // ── Check Fiduciary Duty ──
+      if (url.pathname === '/api/fiduciary/check' && req.method === 'POST') {
+        const { duty, actions } = await parseBody(req);
+        const result = wasmDep.wasm_check_fiduciary_duty(JSON.stringify(duty), JSON.stringify(actions));
+        return json(res, 200, result);
+      }
+
+      // ── eDiscovery Search ──
+      if (url.pathname === '/api/ediscovery/search' && req.method === 'POST') {
+        const { request, corpus } = await parseBody(req);
+        const result = wasmDep.wasm_ediscovery_search(JSON.stringify(request), JSON.stringify(corpus));
+        return json(res, 200, result);
+      }
+
+      // ── Escalation: Evaluate Signals ──
+      if (url.pathname === '/api/escalation/evaluate' && req.method === 'POST') {
+        const { signals } = await parseBody(req);
+        const result = wasmDep.wasm_evaluate_signals(JSON.stringify(signals));
+        return json(res, 200, result);
+      }
+
+      json(res, 404, { error: 'Not found' });
+    } catch (e) {
+      console.error('Error:', e);
+      json(res, 500, { error: e.message });
     }
+  };
+}
 
-    // ── Check Fiduciary Duty ──
-    if (url.pathname === '/api/fiduciary/check' && req.method === 'POST') {
-      const { duty, actions } = await parseBody(req);
-      const result = wasm.wasm_check_fiduciary_duty(JSON.stringify(duty), JSON.stringify(actions));
-      return json(res, 200, result);
-    }
+const server = http.createServer(createHandler(pool, wasm));
 
-    // ── eDiscovery Search ──
-    if (url.pathname === '/api/ediscovery/search' && req.method === 'POST') {
-      const { request, corpus } = await parseBody(req);
-      const result = wasm.wasm_ediscovery_search(JSON.stringify(request), JSON.stringify(corpus));
-      return json(res, 200, result);
-    }
+if (process.env.NODE_ENV !== 'test') {
+  server.listen(PORT, () => console.log(`[provenance-writer] Running on :${PORT}`));
+}
 
-    // ── Escalation: Evaluate Signals ──
-    if (url.pathname === '/api/escalation/evaluate' && req.method === 'POST') {
-      const { signals } = await parseBody(req);
-      const result = wasm.wasm_evaluate_signals(JSON.stringify(signals));
-      return json(res, 200, result);
-    }
-
-    json(res, 404, { error: 'Not found' });
-  } catch (e) {
-    console.error('Error:', e);
-    json(res, 500, { error: e.message });
-  }
-});
-
-server.listen(PORT, () => console.log(`[provenance-writer] Running on :${PORT}`));
+export { server };
